@@ -9,124 +9,17 @@ Developed for **transonic and supersonic flows**, as well as **injection mouldin
 | `./Allwmake` | ESI OpenFOAM (**v2412** / openfoam.com) | `libSnGrad.so` |
 | `./Allwmake-tcae` | TCAE / Foundation (**OpenFOAM-dev**) | `libSnGradTCAE.so` |
 
-Theory follows Hill, Deising, Acher, Klein, Bothe & Marschall,  
-[*Boundedness-preserving implicit correction of mesh-induced errors…*](https://arxiv.org/abs/1705.11063), arXiv:1705.11063.
+Based on Hill et al., [*Boundedness-preserving implicit correction of mesh-induced errors…*](https://arxiv.org/abs/1705.11063), arXiv:1705.11063.
 
 ---
 
-## Why implicit correction?
+## Idea
 
-On a non-orthogonal, skewed mesh the face flux / Laplacian needs more than the simple neighbour difference. OpenFOAM usually adds that as an **explicit** deferred correction. Here the same terms are absorbed into an **effective coefficient**, so:
+On a non-orthogonal or skewed mesh, OpenFOAM usually applies geometric corrections as **explicit** deferred terms. These schemes fold the same corrections into an **effective face coefficient**, so:
 
 - the Laplacian / convection matrix stays consistent with the correction,
-- no large deferred source appears every iteration,
-- boundedness and diagonal dominance are easier to protect (limiters / fallbacks).
-
----
-
-## Mathematical background
-
-### Geometry
-
-For a face with area vector $\mathbf{S}_f$, decompose (paper Eq. 7, over-relaxed form)
-
-$$
-\mathbf{S}_f = \boldsymbol{\Delta} + \mathbf{k},
-\qquad
-\boldsymbol{\Delta}
-=
-\frac{|\mathbf{S}_f|^2}{\mathbf{S}_f\cdot\mathbf{d}}\,\mathbf{d}.
-$$
-
-OpenFOAM’s `nonOrthDeltaCoeffs` and `nonOrthCorrectionVectors` correspond to
-
-$$
-\delta_{\perp}
-=
-\frac{|\boldsymbol{\Delta}|}{|\mathbf{S}_f|\,|\mathbf{d}|},
-\qquad
-\mathbf{k}_f
-=
-\frac{\mathbf{k}}{|\mathbf{S}_f|}.
-$$
-
-The **skew (non-conjunctionality) vector** is the offset of the face centre $C_f$ from the intersection $f'$ of the owner–neighbour line with the face plane:
-
-$$
-\mathbf{m} = C_f - f'.
-$$
-
-### Corrected surface-normal gradient
-
-Paper Eq. 17 (normalised by $|\mathbf{S}_f|$):
-
-$$
-\begin{aligned}
-(\nabla\phi)_f\cdot\hat{\mathbf{n}}
-&=
-\delta_{\perp}\,(\phi_N-\phi_P)
-+
-\mathbf{k}_f\cdot(\nabla\phi)_{f'}
-+
-\hat{\mathbf{n}}\cdot\bigl[\mathbf{H}_{f'}\cdot\mathbf{m}\bigr],
-\end{aligned}
-$$
-
-where $\mathbf{H}=\nabla(\nabla\phi)$ is the Hessian (second derivatives) used for the skew term.
-
-### Implicit form (diffusion)
-
-Fold corrections into an effective delta (paper Eqs. 18–19):
-
-$$
-\delta_{\mathrm{eff}}
-=
-\delta_{\perp}
-+
-\frac{
-\mathbf{k}_f\cdot(\nabla\phi)_{f'}
-+
-\hat{\mathbf{n}}\cdot(\mathbf{H}_{f'}\cdot\mathbf{m})
-}{\phi_N-\phi_P},
-$$
-
-so that
-
-$$
-\mathrm{snGrad}(\phi)_f
-=
-\delta_{\mathrm{eff}}\,(\phi_N-\phi_P)
-$$
-
-enters `fvm::laplacian` with **no explicit correction source** (`correction()` returns `nullptr`).
-
-### Implicit form (advection / interpolation)
-
-For convection, Hill et al. Eq. 14 folds skew into the interpolation weight of a base scheme $w_{\mathrm{base}}$:
-
-**Scalar**
-
-$$
-w_{\mathrm{eff}}
-=
-w_{\mathrm{base}}
-+
-\frac{\mathbf{m}\cdot(\nabla\phi)_{f'}}{\phi_N-\phi_P}.
-$$
-
-**Vector / tensor** (single scalar weight required by `gaussConvectionScheme`)
-
-$$
-w_{\mathrm{eff}}
-=
-w_{\mathrm{base}}
-+
-\frac{
-\bigl(\mathbf{m}\cdot(\nabla\mathbf{U})_{f'}\bigr)\cdot(\mathbf{U}_N-\mathbf{U}_P)
-}{|\mathbf{U}_N-\mathbf{U}_P|^2}.
-$$
-
-If $|\phi_N-\phi_P|$ (or $|\mathbf{U}_N-\mathbf{U}_P|$) is negligible, the correction is skipped on that face.
+- large deferred sources are avoided each iteration,
+- boundedness and diagonal dominance are easier to protect.
 
 ---
 
@@ -136,23 +29,20 @@ If $|\phi_N-\phi_P|$ (or $|\mathbf{U}_N-\mathbf{U}_P|$) is negligible, the corre
 
 | Keyword | Role | Explicit source? |
 | --- | --- | --- |
-| `implicitCorrected` | Full NO + NC folded into $\delta_{\mathrm{eff}}$; positivity / GAMG-safe limiter | No |
-| `implicitStabCorrected` | Stabilised variant: adds $|\mathrm{corr}|$ so $\delta_{\mathrm{eff}}\ge\delta_{\perp}$ | No |
-| `newCorrected` | Explicit NO + NC correction (classical deferred form) | Yes |
+| `implicitCorrected` | Non-orthogonal + skew correction folded into the face delta; positivity / GAMG-safe limiter | No |
+| `implicitStabCorrected` | Stabilised variant that keeps the effective delta at least as large as the orthogonal one | No |
+| `newCorrected` | Explicit non-orthogonal + skew correction (classical deferred form) | Yes |
 | `skewImpCorrected` | ESI-only experimental / WIP | — |
 
-**Recommended**
+**Recommended:** vectors / rough meshes → `implicitStabCorrected`; scalars → `implicitCorrected`.
 
-- Vectors / rough meshes → **`implicitStabCorrected`**
-- Scalars when you want the signed paper form → **`implicitCorrected`** (with the built-in face fallbacks)
-
-### Advection — `divSchemes` / interpolation
+### Advection — `divSchemes`
 
 | Keyword | Role |
 | --- | --- |
-| `implicitSkewCorrected <baseScheme> …` | Wraps a base interpolant (`linear`, `linearUpwind`, `linearUpwindV`, …) and applies Eq. 14 |
+| `implicitSkewCorrected <baseScheme> …` | Wraps a base interpolant (`linear`, `linearUpwind`, `linearUpwindV`, …) and adds an implicit skew correction to its weights |
 
-Passes through the base scheme’s `corrected()` / `correction()` (e.g. upwind gradient reconstruction still works).
+The base scheme’s own explicit correction (e.g. upwind gradient reconstruction) is passed through unchanged.
 
 ---
 
@@ -167,8 +57,6 @@ cd surfaceNormalGradientSchemes
 # → $FOAM_USER_LIBBIN/libSnGrad.so
 ```
 
-Clean:
-
 ```bash
 ./Allwclean
 ```
@@ -182,19 +70,17 @@ cd surfaceNormalGradientSchemes
 # → $FOAM_USER_LIBBIN/libSnGradTCAE.so
 ```
 
-Clean:
-
 ```bash
 ./Allwclean-tcae
 ```
 
-> Source the matching OpenFOAM environment **before** building. The TCAE script exits if `$WM_PROJECT_DIR` is unset.
+Source the matching OpenFOAM environment **before** building. The TCAE script exits if `$WM_PROJECT_DIR` is unset.
 
 ---
 
 ## Case setup
 
-### 1. Load the library
+### Load the library
 
 `system/controlDict`:
 
@@ -206,7 +92,7 @@ libs
 );
 ```
 
-### 2. Surface-normal gradients
+### Surface-normal gradients
 
 `system/fvSchemes`:
 
@@ -220,12 +106,11 @@ snGradSchemes
 
 gradSchemes
 {
-    // leastSquares is preferred with these corrections (paper §5.1)
     default         leastSquares;
 }
 ```
 
-### 3. Skew-aware advection
+### Skew-aware advection
 
 ```c++
 divSchemes
@@ -247,27 +132,19 @@ surfaceNormalGradientSchemes/
 ├── Allwmake-tcae / Allwclean-tcae    # TCAE → libSnGradTCAE
 ├── REVIEW-TCAE.md                    # Port notes & numerics review
 ├── src/                              # ESI OpenFOAM-v2412
-│   └── finiteVolume/
-│       ├── finiteVolume/snGradSchemes/
-│       └── interpolation/.../implicitSkewCorrected/
 └── src-tcae/                         # Foundation / TCAE 26.03
-    └── finiteVolume/
-        ├── finiteVolume/snGradSchemes/
-        └── interpolation/.../implicitSkewCorrected/
 ```
-
-ESI `src/` also keeps `oldSchemes/` and `skewImpCorrectedSnGrad` for reference; they are not part of the TCAE library.
 
 ---
 
-## Practical notes
+## Notes
 
-- Prefer **`leastSquares`** (or a limited least-squares) for the gradients that feed the corrections.
-- On highly skewed wall tets, **mesh quality** still dominates; these schemes reduce numerical noise, they do not replace prism layers.
-- Coupled patches (processor / cyclic) are corrected in the current `implicitCorrected` / `implicitStabCorrected` / `implicitSkewCorrected` implementations.
-- Near-uniform regions skip the $\Delta\phi$ denominator so the scheme does not blow up ($\div\mathrm{SMALL}$).
+- Prefer `leastSquares` (or limited least-squares) for gradients used by these corrections.
+- Mesh quality still matters; these schemes reduce numerical noise but do not replace good near-wall layers.
+- Coupled patches (processor / cyclic) are corrected.
+- Near-uniform faces skip the correction so the scheme does not blow up.
 
-See [`REVIEW-TCAE.md`](REVIEW-TCAE.md) for the ESI↔TCAE API map and the bug-fix history.
+See [`REVIEW-TCAE.md`](REVIEW-TCAE.md) for the ESI↔TCAE port details.
 
 ---
 
@@ -276,8 +153,6 @@ See [`REVIEW-TCAE.md`](REVIEW-TCAE.md) for the ESI↔TCAE API map and the bug-fi
 > R. Hill, D. Deising, H. Acher, H. Klein, D. Bothe, H. Marschall,  
 > *Boundedness-preserving implicit correction of mesh-induced errors for VoF based heat and mass transfer*,  
 > [arXiv:1705.11063](https://arxiv.org/abs/1705.11063).
-
-Especially Eqs. **7**, **14**, **17–19**.
 
 ---
 
