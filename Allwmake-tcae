@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set +x
+set -e
+
+# Build the TCAE 26.03 (OpenFOAM-dev / openfoam.org) port of the
+# implicit / explicit sngrad correction schemes.  Source the TCAE
+# environment (e.g. `source /path/to/OpenFOAM-dev/etc/bashrc`) before
+# running.
+
+if [ -z "$WM_PROJECT_DIR" ]; then
+    echo "ERROR: OpenFOAM environment is not set."
+    echo "       Source \$FOAM_INST_DIR/OpenFOAM-dev/etc/bashrc first."
+    exit 1
+fi
+
+wmake libso src-tcae/finiteVolume/finiteVolume/snGradSchemes

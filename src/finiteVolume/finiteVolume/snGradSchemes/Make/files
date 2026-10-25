@@ -1,0 +1,8 @@
+implicitStabCorrectedSnGrad/implicitStabCorrectedSnGrads.C
+implicitCorrectedSnGrad/implicitCorrectedSnGrads.C
+newCorrectedSnGrad/newCorrectedSnGrads.C
+skewImpCorrectedSnGrad/skewImpCorrectedSnGrads.C
+
+../../interpolation/surfaceInterpolation/schemes/implicitSkewCorrected/implicitSkewCorrecteds.C
+
+LIB = $(FOAM_USER_LIBBIN)/libSnGrad

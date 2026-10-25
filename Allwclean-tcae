@@ -1,0 +1,5 @@
+#!/bin/bash
+
+set +x
+
+wclean libso src-tcae/finiteVolume/finiteVolume/snGradSchemes
